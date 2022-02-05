@@ -1,0 +1,12 @@
+[package]
+name = "rq-tower"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+tower = { version = "0.4.11", default-features = false, features = ["util", "buffer", "make", "timeout", "limit"] }
+tokio = { version = "1", features = ["full"] }
+async-trait = "0.1"
+rs-qq = { git = "ssh://git@github.com/lz1998/rs-qq.git", branch = "master" }
