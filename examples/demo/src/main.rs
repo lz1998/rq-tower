@@ -1,3 +1,5 @@
+#![feature(async_closure)]
+
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -19,6 +21,14 @@ async fn main() {
     let service = RQServiceBuilder::new()
         .on_group_message(print_group)
         .on_private_message(print_private)
+        .on_group_request(async move |e| {
+            println!("{:?}", e.request);
+            e.accept().await.ok();
+        })
+        .on_friend_request(async move |e| {
+            println!("{:?}", e.request);
+            e.accept().await.ok();
+        })
         .build();
     let cli = Client::new(Device::random(), get_version(Protocol::IPad), service);
 
