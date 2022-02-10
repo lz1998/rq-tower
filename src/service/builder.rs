@@ -23,6 +23,27 @@ pub struct RQServiceBuilder {
     friend_request_handlers: Vec<BoxCloneService<FriendRequestEvent, (), Infallible>>,
 }
 
+macro_rules! call_event {
+    ($($ety: tt: $handler: tt),*) => {
+        fn call(&mut self, e: QEvent) -> Self::Future {
+            match e {
+                $(
+                    QEvent::$ety(e) => {
+                        let mut handlers = self.$handler.clone();
+                        Box::pin(async move {
+                            for h in handlers.iter_mut() {
+                                h.call(e.clone()).await.ok();
+                            }
+                            Ok(())
+                        })
+                    }
+                )*
+                _ => Box::pin(async { Ok(()) })
+            }
+        }
+    };
+}
+
 impl Service<QEvent> for RQServiceBuilder {
     type Response = ();
     type Error = Infallible;
@@ -32,57 +53,32 @@ impl Service<QEvent> for RQServiceBuilder {
         Poll::Ready(Ok(()))
     }
 
-    fn call(&mut self, req: QEvent) -> Self::Future {
-        // let mut handlers = self.login_handlers.clone();
-        return match req {
-            QEvent::LoginEvent(uin) => {
-                let mut handlers = self.login_handlers.clone();
-                Box::pin(async move {
-                    for h in handlers.iter_mut() {
-                        h.call(uin).await.ok();
-                    }
+    call_event!(
+        Login: login_handlers,
+        GroupMessage: group_message_handlers,
+        PrivateMessage: private_message_handlers,
+        GroupRequest: group_request_handlers,
+        FriendRequest: friend_request_handlers
+    );
+}
+
+macro_rules! on_event {
+    ($fname: ident,$handler: tt, $aty: ty) => {
+        pub fn $fname<F, Fut>(mut self, f: F) -> Self
+        where
+            F: Fn($aty) -> Fut + Copy + Send + Sync + 'static,
+            Fut: Future<Output = ()> + Send,
+        {
+            let s: BoxCloneService<$aty, (), Infallible> = ServiceBuilder::new()
+                .boxed_clone()
+                .service_fn(move |req| async move {
+                    f(req).await;
                     Ok(())
-                })
-            }
-            QEvent::GroupMessage(event) => {
-                let mut handlers = self.group_message_handlers.clone();
-                Box::pin(async move {
-                    for h in handlers.iter_mut() {
-                        h.call(event.clone()).await.ok();
-                    }
-                    Ok(())
-                })
-            }
-            QEvent::PrivateMessage(event) => {
-                let mut handlers = self.private_message_handlers.clone();
-                Box::pin(async move {
-                    for h in handlers.iter_mut() {
-                        h.call(event.clone()).await.ok();
-                    }
-                    Ok(())
-                })
-            }
-            QEvent::GroupRequest(event) => {
-                let mut handlers = self.group_request_handlers.clone();
-                Box::pin(async move {
-                    for h in handlers.iter_mut() {
-                        h.call(event.clone()).await.ok();
-                    }
-                    Ok(())
-                })
-            }
-            QEvent::FriendRequest(event) => {
-                let mut handlers = self.friend_request_handlers.clone();
-                Box::pin(async move {
-                    for h in handlers.iter_mut() {
-                        h.call(event.clone()).await.ok();
-                    }
-                    Ok(())
-                })
-            }
-            _ => Box::pin(async move { Ok(()) }),
-        };
-    }
+                });
+            self.$handler.push(s);
+            self
+        }
+    };
 }
 
 impl RQServiceBuilder {
@@ -92,79 +88,20 @@ impl RQServiceBuilder {
     pub fn build(self) -> RQService {
         RQService(Buffer::new(self, 10))
     }
-    pub fn on_login<F, Fut>(mut self, f: F) -> Self
-    where
-        F: FnOnce(i64) -> Fut + Copy + Send + 'static + Sync,
-        Fut: Future<Output = ()> + Send,
-    {
-        let s: BoxCloneService<i64, (), Infallible> = ServiceBuilder::new()
-            .boxed_clone()
-            .service_fn(move |req| async move {
-                f(req).await;
-                Ok(())
-            });
-        self.login_handlers.push(s);
-        self
-    }
 
-    pub fn on_group_message<F, Fut>(mut self, f: F) -> Self
-    where
-        F: FnOnce(GroupMessageEvent) -> Fut + Copy + Send + 'static + Sync,
-        Fut: Future<Output = ()> + Send,
-    {
-        let s: BoxCloneService<GroupMessageEvent, (), Infallible> = ServiceBuilder::new()
-            .boxed_clone()
-            .service_fn(move |req| async move {
-                f(req).await;
-                Ok(())
-            });
-        self.group_message_handlers.push(s);
-        self
-    }
-    pub fn on_private_message<F, Fut>(mut self, f: F) -> Self
-    where
-        F: FnOnce(PrivateMessageEvent) -> Fut + Copy + Send + 'static + Sync,
-        Fut: Future<Output = ()> + Send,
-    {
-        let s: BoxCloneService<PrivateMessageEvent, (), Infallible> = ServiceBuilder::new()
-            .boxed_clone()
-            .service_fn(move |req| async move {
-                f(req).await;
-                Ok(())
-            });
-        self.private_message_handlers.push(s);
-        self
-    }
-
-    pub fn on_group_request<F, Fut>(mut self, f: F) -> Self
-    where
-        F: FnOnce(GroupRequestEvent) -> Fut + Copy + Send + 'static + Sync,
-        Fut: Future<Output = ()> + Send,
-    {
-        let s: BoxCloneService<GroupRequestEvent, (), Infallible> = ServiceBuilder::new()
-            .boxed_clone()
-            .service_fn(move |req| async move {
-                f(req).await;
-                Ok(())
-            });
-        self.group_request_handlers.push(s);
-        self
-    }
-
-    pub fn on_friend_request<F, Fut>(mut self, f: F) -> Self
-    where
-        F: FnOnce(FriendRequestEvent) -> Fut + Copy + Send + 'static + Sync,
-        Fut: Future<Output = ()> + Send,
-    {
-        let s: BoxCloneService<FriendRequestEvent, (), Infallible> = ServiceBuilder::new()
-            .boxed_clone()
-            .service_fn(move |req| async move {
-                f(req).await;
-                Ok(())
-            });
-        self.friend_request_handlers.push(s);
-        self
-    }
+    on_event!(on_login, login_handlers, i64);
+    on_event!(on_group_message, group_message_handlers, GroupMessageEvent);
+    on_event!(
+        on_private_message,
+        private_message_handlers,
+        PrivateMessageEvent
+    );
+    on_event!(on_group_request, group_request_handlers, GroupRequestEvent);
+    on_event!(
+        on_friend_request,
+        friend_request_handlers,
+        FriendRequestEvent
+    );
 }
 
 impl Service<i64> for RQServiceBuilder {
