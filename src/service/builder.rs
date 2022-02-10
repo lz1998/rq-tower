@@ -1,12 +1,15 @@
-use rs_qq::client::event::{
-    FriendRequestEvent, GroupMessageEvent, GroupRequestEvent, PrivateMessageEvent,
-};
 use std::convert::Infallible;
 use std::future::Future;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use std::time::Duration;
 
+use rs_qq::client::event::{
+    DeleteFriendEvent, FriendMessageRecallEvent, FriendPokeEvent, FriendRequestEvent,
+    GroupLeaveEvent, GroupMessageEvent, GroupMessageRecallEvent, GroupMuteEvent,
+    GroupNameUpdateEvent, GroupRequestEvent, MemberPermissionChangeEvent, NewFriendEvent,
+    NewMemberEvent, PrivateMessageEvent, SelfInvitedEvent,
+};
 use tower::buffer::Buffer;
 use tower::util::BoxCloneService;
 use tower::{Service, ServiceBuilder};
@@ -21,6 +24,18 @@ pub struct RQServiceBuilder {
     private_message_handlers: Vec<BoxCloneService<PrivateMessageEvent, (), Infallible>>,
     group_request_handlers: Vec<BoxCloneService<GroupRequestEvent, (), Infallible>>,
     friend_request_handlers: Vec<BoxCloneService<FriendRequestEvent, (), Infallible>>,
+    self_invited_handlers: Vec<BoxCloneService<SelfInvitedEvent, (), Infallible>>,
+    new_member_handlers: Vec<BoxCloneService<NewMemberEvent, (), Infallible>>,
+    group_mute_handlers: Vec<BoxCloneService<GroupMuteEvent, (), Infallible>>,
+    friend_message_recall_handlers: Vec<BoxCloneService<FriendMessageRecallEvent, (), Infallible>>,
+    group_message_recall_handlers: Vec<BoxCloneService<GroupMessageRecallEvent, (), Infallible>>,
+    new_friend_handlers: Vec<BoxCloneService<NewFriendEvent, (), Infallible>>,
+    group_leave_handlers: Vec<BoxCloneService<GroupLeaveEvent, (), Infallible>>,
+    friend_poke_handlers: Vec<BoxCloneService<FriendPokeEvent, (), Infallible>>,
+    group_name_update_handlers: Vec<BoxCloneService<GroupNameUpdateEvent, (), Infallible>>,
+    delete_friend_handlers: Vec<BoxCloneService<DeleteFriendEvent, (), Infallible>>,
+    member_permission_change_handlers:
+        Vec<BoxCloneService<MemberPermissionChangeEvent, (), Infallible>>,
 }
 
 macro_rules! call_event {
@@ -44,6 +59,7 @@ macro_rules! call_event {
     };
 }
 
+#[allow(clippy::type_complexity)]
 impl Service<QEvent> for RQServiceBuilder {
     type Response = ();
     type Error = Infallible;
@@ -54,11 +70,22 @@ impl Service<QEvent> for RQServiceBuilder {
     }
 
     call_event!(
-        Login: login_handlers,
+        LoginEvent: login_handlers,
         GroupMessage: group_message_handlers,
         PrivateMessage: private_message_handlers,
         GroupRequest: group_request_handlers,
-        FriendRequest: friend_request_handlers
+        SelfInvited: self_invited_handlers,
+        FriendRequest: friend_request_handlers,
+        NewMember: new_member_handlers,
+        GroupMute: group_mute_handlers,
+        FriendMessageRecall: friend_message_recall_handlers,
+        GroupMessageRecall: group_message_recall_handlers,
+        NewFriend: new_friend_handlers,
+        GroupLeave: group_leave_handlers,
+        FriendPoke: friend_poke_handlers,
+        GroupNameUpdate: group_name_update_handlers,
+        DeleteFriend: delete_friend_handlers,
+        MemberPermissionChange: member_permission_change_handlers
     );
 }
 
@@ -97,13 +124,41 @@ impl RQServiceBuilder {
         PrivateMessageEvent
     );
     on_event!(on_group_request, group_request_handlers, GroupRequestEvent);
+    on_event!(on_self_invited, self_invited_handlers, SelfInvitedEvent);
     on_event!(
         on_friend_request,
         friend_request_handlers,
         FriendRequestEvent
     );
+    on_event!(on_new_member, new_member_handlers, NewMemberEvent);
+    on_event!(on_group_mute, group_mute_handlers, GroupMuteEvent);
+    on_event!(
+        on_friend_message_recall,
+        friend_message_recall_handlers,
+        FriendMessageRecallEvent
+    );
+    on_event!(
+        on_group_message_recall,
+        group_message_recall_handlers,
+        GroupMessageRecallEvent
+    );
+    on_event!(on_new_friend, new_friend_handlers, NewFriendEvent);
+    on_event!(on_group_leave, group_leave_handlers, GroupLeaveEvent);
+    on_event!(on_friend_poke, friend_poke_handlers, FriendPokeEvent);
+    on_event!(
+        on_group_name_update,
+        group_name_update_handlers,
+        GroupNameUpdateEvent
+    );
+    on_event!(on_delete_friend, delete_friend_handlers, DeleteFriendEvent);
+    on_event!(
+        on_member_permission_change,
+        member_permission_change_handlers,
+        MemberPermissionChangeEvent
+    );
 }
 
+#[allow(clippy::type_complexity)]
 impl Service<i64> for RQServiceBuilder {
     type Response = i64;
     type Error = Infallible;
