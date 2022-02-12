@@ -8,7 +8,7 @@ use rs_qq::client::event::{
     DeleteFriendEvent, FriendMessageRecallEvent, FriendPokeEvent, FriendRequestEvent,
     GroupLeaveEvent, GroupMessageEvent, GroupMessageRecallEvent, GroupMuteEvent,
     GroupNameUpdateEvent, GroupRequestEvent, MemberPermissionChangeEvent, NewFriendEvent,
-    NewMemberEvent, PrivateMessageEvent, SelfInvitedEvent,
+    NewMemberEvent, PrivateMessageEvent, SelfInvitedEvent, TempMessageEvent,
 };
 use tower::buffer::Buffer;
 use tower::util::BoxCloneService;
@@ -22,6 +22,7 @@ pub struct RQServiceBuilder {
     login_handlers: Vec<BoxCloneService<i64, (), Infallible>>,
     group_message_handlers: Vec<BoxCloneService<GroupMessageEvent, (), Infallible>>,
     private_message_handlers: Vec<BoxCloneService<PrivateMessageEvent, (), Infallible>>,
+    temp_message_handlers: Vec<BoxCloneService<TempMessageEvent, (), Infallible>>,
     group_request_handlers: Vec<BoxCloneService<GroupRequestEvent, (), Infallible>>,
     friend_request_handlers: Vec<BoxCloneService<FriendRequestEvent, (), Infallible>>,
     self_invited_handlers: Vec<BoxCloneService<SelfInvitedEvent, (), Infallible>>,
@@ -70,9 +71,10 @@ impl Service<QEvent> for RQServiceBuilder {
     }
 
     call_event!(
-        LoginEvent: login_handlers,
+        Login: login_handlers,
         GroupMessage: group_message_handlers,
         PrivateMessage: private_message_handlers,
+        TempMessage: temp_message_handlers,
         GroupRequest: group_request_handlers,
         SelfInvited: self_invited_handlers,
         FriendRequest: friend_request_handlers,
@@ -123,6 +125,7 @@ impl RQServiceBuilder {
         private_message_handlers,
         PrivateMessageEvent
     );
+    on_event!(on_temp_message, temp_message_handlers, TempMessageEvent);
     on_event!(on_group_request, group_request_handlers, GroupRequestEvent);
     on_event!(on_self_invited, self_invited_handlers, SelfInvitedEvent);
     on_event!(
