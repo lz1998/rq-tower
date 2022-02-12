@@ -7,7 +7,7 @@ pub async fn print_group(event: GroupMessageEvent) {
     let group_name = group.map(|g| g.info.name.clone()).unwrap_or_default();
     let client = event.client;
     let message = event.message;
-    println!("print_group({}): {:?}", group_name, message);
+    tracing::info!("group_msg({}): {}", group_name, message.elements);
     if message.from_uin == 875543533 {
         let mut chain = MessageChain::default();
         chain.push(Text::new("hello".into()));
@@ -19,7 +19,7 @@ pub async fn print_group(event: GroupMessageEvent) {
 }
 
 pub async fn print_private(PrivateMessageEvent { client, message }: PrivateMessageEvent) {
-    println!("print_private: {:?}", message);
+    tracing::info!("private_msg({}): {}", message.from_uin, message.elements);
     let mut chain = MessageChain::default();
     chain.push(Text::new("hello".into()));
     client
