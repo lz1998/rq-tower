@@ -1,6 +1,7 @@
 #![feature(async_closure)]
 
 use std::net::{Ipv4Addr, SocketAddr};
+use std::path::Path;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
@@ -43,7 +44,7 @@ async fn main() {
 
     // 创建 client
     let client = Arc::new(Client::new(
-        Device::random(),
+        load_device_or_random().await,
         get_version(Protocol::IPad),
         service,
     ));
@@ -155,28 +156,33 @@ async fn qrcode_login(client: &Arc<Client>) {
 async fn auto_reconnect(client: Arc<Client>, token: Bytes, interval: Duration, max: usize) {
     let mut count = 0;
     loop {
-        tracing::warn!("已掉线，10秒后重连");
+        client.stop();
+        tracing::warn!("已掉线，10秒后重连，已重连 {} 次", count);
         tokio::time::sleep(interval).await;
-        let c = client.clone();
-        let handle = tokio::spawn(async move { c.start().await });
-        tokio::time::sleep(Duration::from_millis(200)).await; // 等一下，确保连上了
-        if let Err(err) = client.token_login(token.clone()).await {
-            tracing::error!("failed to token_login, err: {}", err);
-            client.stop();
+        let stream = if let Ok(stream) =
+            TcpStream::connect(SocketAddr::new(Ipv4Addr::new(42, 81, 176, 211).into(), 443)).await
+        {
+            count = 0;
+            stream
+        } else {
             count += 1;
             if count > max {
                 break;
             }
             continue;
-        } else {
-            count = 0;
-            client.register_client().await.unwrap();
-            start_heartbeat(client.clone()).await;
-            tracing::info!("掉线重连成功");
+        };
+        let c = client.clone();
+        let handle = tokio::spawn(async move { c.start_with_stream(stream).await });
+        tokio::task::yield_now().await; // 等一下，确保连上了
+        if let Err(err) = client.token_login(token.clone()).await {
+            // token 可能过期了
+            tracing::error!("failed to token_login, err: {}", err);
+            break;
         }
-        if let Err(err) = handle.await {
-            tracing::error!("disconnect: {}", err);
-        }
+        client.register_client().await.unwrap();
+        start_heartbeat(client.clone()).await;
+        tracing::info!("掉线重连成功");
+        handle.await.ok();
     }
 }
 
@@ -186,5 +192,23 @@ async fn start_heartbeat(client: Arc<Client>) {
         tokio::spawn(async move {
             client.do_heartbeat().await;
         });
+    }
+}
+
+async fn load_device_or_random() -> Device {
+    match Path::new("device.json").exists() {
+        true => serde_json::from_str(
+            &tokio::fs::read_to_string("device.json")
+                .await
+                .expect("failed to read device.json"),
+        )
+        .expect("failed to parse device info"),
+        false => {
+            let d = Device::random();
+            tokio::fs::write("device.json", serde_json::to_string(&d).unwrap())
+                .await
+                .expect("failed to write device info to file");
+            d
+        }
     }
 }
