@@ -17,7 +17,7 @@ use crate::handlers::print::{print_group, print_private};
 
 mod handlers;
 
-#[tokio::main]
+#[tokio::main(flavor = "current_thread")]
 async fn main() {
     // 打开日志
     let env = tracing_subscriber::EnvFilter::from("rs_qq=debug,info");
@@ -124,12 +124,12 @@ async fn qrcode_login(client: Arc<Client>) -> JoinHandle<RQResult<()>> {
             .reload_friends()
             .await
             .expect("failed to reload friend list");
-        tracing::info!("{:?}", client.friends.read().await);
+        tracing::info!("加载好友 {} 个", client.friends.read().await.len());
         client
             .reload_groups()
             .await
             .expect("failed to reload group list");
-        tracing::info!("{:?}", client.groups.read().await);
+        tracing::info!("加载群 {} 个", client.groups.read().await.len());
     }
     start_heartbeat(client).await;
     handle
