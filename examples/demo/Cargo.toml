@@ -7,7 +7,6 @@ edition = "2021"
 
 [dependencies]
 rq-tower = { path = "../.." }
-#rq-tower = { git = "ssh://git@github.com/lz1998/rq-tower.git", branch = "main" }
 #rq-tower = { git = "https://github.com/lz1998/rq-tower.git", branch = "main" }
 tokio = { version = "1", features = ["full"] }
 async-trait = "0.1"
