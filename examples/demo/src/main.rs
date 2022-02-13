@@ -1,15 +1,16 @@
 #![feature(async_closure)]
 
+use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
 
 use bytes::Bytes;
-use tokio::task::JoinHandle;
+use tokio::net::TcpStream;
 
 use rq_tower::rq::device::Device;
 use rq_tower::rq::version::{get_version, Protocol};
-use rq_tower::rq::{Client, RQResult};
+use rq_tower::rq::Client;
 use rq_tower::rq::{LoginResponse, QRCodeState};
 use rq_tower::service::builder::RQServiceBuilder;
 
@@ -39,21 +40,37 @@ async fn main() {
             e.accept().await.ok();
         })
         .build();
-    let cli = Client::new(Device::random(), get_version(Protocol::IPad), service);
 
-    // 下面都是登录流程，不用动
-    let client = Arc::new(cli);
-    let handle = qrcode_login(client.clone()).await;
+    // 创建 client
+    let client = Arc::new(Client::new(
+        Device::random(),
+        get_version(Protocol::IPad),
+        service,
+    ));
+
+    // 下面都是登录和自动重连，不用动
+
+    // TCP 连接
+    let stream = TcpStream::connect(SocketAddr::new(Ipv4Addr::new(42, 81, 176, 211).into(), 443))
+        .await
+        .expect("failed to connect tcp");
+    // 开始处理网络
+    let c = client.clone();
+    let handle = tokio::spawn(async move { c.start_with_stream(stream).await });
+    // 确保网络已开始处理
+    tokio::task::yield_now().await;
+    // 扫码登录，阻塞到登录成功
+    qrcode_login(&client).await;
+    // 登录成功后生成 token，用于掉线重连
     let token = client.gen_token().await;
-    handle.await.ok(); // 阻塞到掉线
+    // 阻塞到掉线
+    handle.await.ok();
+    // 自动重连
     auto_reconnect(client, token, Duration::from_secs(10), 10).await;
 }
 
 // 扫码登录
-async fn qrcode_login(client: Arc<Client>) -> JoinHandle<RQResult<()>> {
-    let c = client.clone();
-    let handle = tokio::spawn(async move { c.start().await });
-    tokio::time::sleep(Duration::from_millis(200)).await; // 等一下，确保连上了
+async fn qrcode_login(client: &Arc<Client>) {
     let mut resp = client.fetch_qrcode().await.expect("failed to fetch qrcode");
     let mut image_sig = Bytes::new();
     loop {
@@ -131,8 +148,7 @@ async fn qrcode_login(client: Arc<Client>) -> JoinHandle<RQResult<()>> {
             .expect("failed to reload group list");
         tracing::info!("加载群 {} 个", client.groups.read().await.len());
     }
-    start_heartbeat(client).await;
-    handle
+    start_heartbeat(client.clone()).await;
 }
 
 // 自动重连
@@ -154,7 +170,7 @@ async fn auto_reconnect(client: Arc<Client>, token: Bytes, interval: Duration, m
             continue;
         } else {
             count = 0;
-            client.register_client().await;
+            client.register_client().await.unwrap();
             start_heartbeat(client.clone()).await;
             tracing::info!("掉线重连成功");
         }
