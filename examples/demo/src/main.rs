@@ -1,8 +1,6 @@
 #![feature(async_closure)]
 
-use std::net::{Ipv4Addr, SocketAddr};
 use std::path::Path;
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -13,6 +11,8 @@ use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
 use rq_tower::rq::device::Device;
+use rq_tower::rq::ext::common::after_login;
+use rq_tower::rq::ext::reconnect::{auto_reconnect, Credential, DefaultConnector, Token};
 use rq_tower::rq::version::{get_version, Protocol};
 use rq_tower::rq::Client;
 use rq_tower::rq::{LoginResponse, QRCodeState};
@@ -62,12 +62,12 @@ async fn main() {
     // 下面都是登录和自动重连，不用动
 
     // TCP 连接
-    let stream = TcpStream::connect(SocketAddr::new(Ipv4Addr::new(42, 81, 176, 211).into(), 443))
+    let stream = TcpStream::connect(client.get_address())
         .await
         .expect("failed to connect tcp");
     // 开始处理网络
     let c = client.clone();
-    let handle = tokio::spawn(async move { c.start_with_stream(stream).await });
+    let handle = tokio::spawn(async move { c.start(stream).await });
     // 确保网络已开始处理
     tokio::task::yield_now().await;
     // 扫码登录，阻塞到登录成功
@@ -77,7 +77,14 @@ async fn main() {
     // 阻塞到掉线
     handle.await.ok();
     // 自动重连
-    auto_reconnect(client, token, Duration::from_secs(10), 10).await;
+    auto_reconnect(
+        client,
+        Credential::Token(Token(token)),
+        Duration::from_secs(10),
+        10,
+        DefaultConnector,
+    )
+    .await;
 }
 
 // 扫码登录
@@ -146,7 +153,7 @@ async fn qrcode_login(client: &Arc<Client>) {
             .await
             .expect("failed to query qrcode result");
     }
-    client.register_client().await.unwrap();
+    after_login(&client).await;
     {
         client
             .reload_friends()
@@ -158,50 +165,6 @@ async fn qrcode_login(client: &Arc<Client>) {
             .await
             .expect("failed to reload group list");
         tracing::info!("加载群 {} 个", client.groups.read().await.len());
-    }
-    start_heartbeat(client.clone()).await;
-}
-
-// 自动重连
-async fn auto_reconnect(client: Arc<Client>, token: Bytes, interval: Duration, max: usize) {
-    let mut count = 0;
-    loop {
-        client.stop();
-        tracing::warn!("已掉线，10秒后重连，已重连 {} 次", count);
-        tokio::time::sleep(interval).await;
-        let stream = if let Ok(stream) =
-            TcpStream::connect(SocketAddr::new(Ipv4Addr::new(42, 81, 176, 211).into(), 443)).await
-        {
-            count = 0;
-            stream
-        } else {
-            count += 1;
-            if count > max {
-                break;
-            }
-            continue;
-        };
-        let c = client.clone();
-        let handle = tokio::spawn(async move { c.start_with_stream(stream).await });
-        tokio::task::yield_now().await; // 等一下，确保连上了
-        if let Err(err) = client.token_login(token.clone()).await {
-            // token 可能过期了
-            tracing::error!("failed to token_login, err: {}", err);
-            break;
-        }
-        client.register_client().await.unwrap();
-        start_heartbeat(client.clone()).await;
-        tracing::info!("掉线重连成功");
-        handle.await.ok();
-    }
-}
-
-// 开启心跳，重连之前开了就不开
-async fn start_heartbeat(client: Arc<Client>) {
-    if !client.heartbeat_enabled.load(Ordering::Relaxed) {
-        tokio::spawn(async move {
-            client.do_heartbeat().await;
-        });
     }
 }
 
