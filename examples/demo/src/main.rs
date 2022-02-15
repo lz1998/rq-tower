@@ -8,6 +8,9 @@ use std::time::Duration;
 
 use bytes::Bytes;
 use tokio::net::TcpStream;
+use tracing::Level;
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
 
 use rq_tower::rq::device::Device;
 use rq_tower::rq::version::{get_version, Protocol};
@@ -22,10 +25,17 @@ mod handlers;
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
     // 打开日志
-    let env = tracing_subscriber::EnvFilter::from("rs_qq=debug,info");
-    tracing_subscriber::fmt()
-        .with_env_filter(env)
-        .without_time()
+    tracing_subscriber::registry()
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_target(true)
+                .without_time(),
+        )
+        .with(
+            tracing_subscriber::filter::Targets::new()
+                .with_target("rs_qq", Level::DEBUG)
+                .with_target("demo", Level::DEBUG),
+        )
         .init();
 
     // 构造 tower service
