@@ -18,7 +18,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt"] }
 
 [profile.release]
-opt-level = 3
+opt-level = 'z'
 debug = false
 debug-assertions = false
 overflow-checks = false
@@ -26,4 +26,5 @@ lto = true
 incremental = false
 codegen-units = 1
 rpath = false
+strip = true
 #panic = "abort" # 交叉编译可能需要
