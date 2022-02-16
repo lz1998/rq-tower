@@ -6,15 +6,17 @@ use std::time::Duration;
 
 use bytes::Bytes;
 use tokio::net::TcpStream;
+use tokio_util::codec::{FramedRead, LinesCodec};
 use tracing::Level;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
+use futures::StreamExt;
 use rq_tower::rq::device::Device;
 use rq_tower::rq::ext::common::after_login;
 use rq_tower::rq::ext::reconnect::{auto_reconnect, Credential, DefaultConnector, Token};
 use rq_tower::rq::version::{get_version, Protocol};
-use rq_tower::rq::Client;
+use rq_tower::rq::{Client, RQError};
 use rq_tower::rq::{LoginResponse, QRCodeState};
 use rq_tower::service::builder::RQServiceBuilder;
 
@@ -70,8 +72,35 @@ async fn main() {
     let handle = tokio::spawn(async move { c.start(stream).await });
     // 确保网络已开始处理
     tokio::task::yield_now().await;
-    // 扫码登录，阻塞到登录成功
-    qrcode_login(&client).await;
+    // 登录
+    // 如果有账号密码 密码登录，没有 扫码登录
+    let uin = std::env::var("UIN")
+        .map_err(|_| RQError::Other("no uin".into()))
+        .and_then(|u| {
+            u.parse::<i64>()
+                .map_err(|_| RQError::Other("error uin".into()))
+        });
+
+    let password = std::env::var("PASSWORD");
+    if uin.is_ok() && password.is_ok() {
+        password_login(&client, uin.unwrap(), password.unwrap()).await;
+    } else {
+        qrcode_login(&client).await;
+    }
+
+    after_login(&client).await;
+    {
+        client
+            .reload_friends()
+            .await
+            .expect("failed to reload friend list");
+        tracing::info!("加载好友 {} 个", client.friends.read().await.len());
+        client
+            .reload_groups()
+            .await
+            .expect("failed to reload group list");
+        tracing::info!("加载群 {} 个", client.groups.read().await.len());
+    }
     // 登录成功后生成 token，用于掉线重连
     let token = client.gen_token().await;
     // 阻塞到掉线
@@ -153,18 +182,75 @@ async fn qrcode_login(client: &Arc<Client>) {
             .await
             .expect("failed to query qrcode result");
     }
-    after_login(&client).await;
-    {
-        client
-            .reload_friends()
-            .await
-            .expect("failed to reload friend list");
-        tracing::info!("加载好友 {} 个", client.friends.read().await.len());
-        client
-            .reload_groups()
-            .await
-            .expect("failed to reload group list");
-        tracing::info!("加载群 {} 个", client.groups.read().await.len());
+}
+
+// 密码登录
+async fn password_login(client: &Arc<Client>, uin: i64, password: String) {
+    let mut resp = client
+        .password_login(uin, &password)
+        .await
+        .expect("failed to login with password");
+    loop {
+        match resp {
+            LoginResponse::Success {
+                ref account_info, ..
+            } => {
+                tracing::info!("login success: {:?}", account_info);
+                break;
+            }
+            LoginResponse::DeviceLocked {
+                ref sms_phone,
+                ref verify_url,
+                ref message,
+                ..
+            } => {
+                tracing::info!("device locked: {:?}", message);
+                tracing::info!("sms_phone: {:?}", sms_phone);
+                tracing::info!("verify_url: {:?}", verify_url);
+                tracing::info!("手机打开url，处理完成后重启程序");
+                std::process::exit(0);
+                //也可以走短信验证
+                // resp = client.request_sms().await.expect("failed to request sms");
+            }
+            LoginResponse::NeedCaptcha {
+                ref verify_url,
+                // 图片应该没了
+                image_captcha: ref _image_captcha,
+                ..
+            } => {
+                tracing::info!("滑块URL: {:?}", verify_url);
+                tracing::info!("请输入ticket:");
+                let mut reader = FramedRead::new(tokio::io::stdin(), LinesCodec::new());
+                let ticket = reader
+                    .next()
+                    .await
+                    .transpose()
+                    .expect("failed to read ticket")
+                    .expect("failed to read ticket");
+                resp = client
+                    .submit_ticket(&ticket)
+                    .await
+                    .expect("failed to submit ticket");
+            }
+            LoginResponse::DeviceLockLogin { .. } => {
+                resp = client
+                    .device_lock_login()
+                    .await
+                    .expect("failed to login with device lock");
+            }
+            LoginResponse::AccountFrozen => {
+                panic!("account frozen");
+            }
+            LoginResponse::TooManySMSRequest => {
+                panic!("too many sms request");
+            }
+            LoginResponse::UnknownLoginStatus {
+                ref status,
+                ref tlv_map,
+            } => {
+                panic!("unknown login status: {:?}, {:?}", status, tlv_map);
+            }
+        }
     }
 }
 
