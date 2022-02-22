@@ -5,18 +5,21 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use bytes::Bytes;
+use futures::StreamExt;
 use tokio::net::TcpStream;
 use tokio_util::codec::{FramedRead, LinesCodec};
 use tracing::Level;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
-use futures::StreamExt;
 use rq_tower::rq::device::Device;
 use rq_tower::rq::ext::common::after_login;
 use rq_tower::rq::ext::reconnect::{auto_reconnect, Credential, DefaultConnector, Token};
 use rq_tower::rq::version::{get_version, Protocol};
-use rq_tower::rq::{Client, RQError};
+use rq_tower::rq::{
+    Client, LoginDeviceLocked, LoginNeedCaptcha, LoginSuccess, LoginUnknownStatus, QRCodeConfirmed,
+    QRCodeImageFetch, RQError,
+};
 use rq_tower::rq::{LoginResponse, QRCodeState};
 use rq_tower::service::builder::RQServiceBuilder;
 
@@ -122,28 +125,28 @@ async fn qrcode_login(client: &Arc<Client>) {
     let mut image_sig = Bytes::new();
     loop {
         match resp {
-            QRCodeState::QRCodeImageFetch {
+            QRCodeState::ImageFetch(QRCodeImageFetch {
                 ref image_data,
                 ref sig,
-            } => {
+            }) => {
                 tokio::fs::write("qrcode.png", &image_data)
                     .await
                     .expect("failed to write file");
                 image_sig = sig.clone();
                 tracing::info!("二维码: qrcode.png");
             }
-            QRCodeState::QRCodeWaitingForScan => {
+            QRCodeState::WaitingForScan => {
                 tracing::info!("二维码待扫描")
             }
-            QRCodeState::QRCodeWaitingForConfirm => {
+            QRCodeState::WaitingForConfirm => {
                 tracing::info!("二维码待确认")
             }
-            QRCodeState::QRCodeTimeout => {
+            QRCodeState::Timeout => {
                 tracing::info!("二维码已超时，重新获取");
-                if let QRCodeState::QRCodeImageFetch {
+                if let QRCodeState::ImageFetch(QRCodeImageFetch {
                     ref image_data,
                     ref sig,
-                } = client.fetch_qrcode().await.expect("failed to fetch qrcode")
+                }) = client.fetch_qrcode().await.expect("failed to fetch qrcode")
                 {
                     tokio::fs::write("qrcode.png", &image_data)
                         .await
@@ -152,12 +155,12 @@ async fn qrcode_login(client: &Arc<Client>) {
                     tracing::info!("二维码: qrcode.png");
                 }
             }
-            QRCodeState::QRCodeConfirmed {
+            QRCodeState::Confirmed(QRCodeConfirmed {
                 ref tmp_pwd,
                 ref tmp_no_pic_sig,
                 ref tgt_qr,
                 ..
-            } => {
+            }) => {
                 tracing::info!("二维码已确认");
                 let mut login_resp = client
                     .qrcode_login(tmp_pwd, tmp_no_pic_sig, tgt_qr)
@@ -172,7 +175,7 @@ async fn qrcode_login(client: &Arc<Client>) {
                 tracing::info!("{:?}", login_resp);
                 break;
             }
-            QRCodeState::QRCodeCanceled => {
+            QRCodeState::Canceled => {
                 panic!("二维码已取消")
             }
         }
@@ -192,18 +195,18 @@ async fn password_login(client: &Arc<Client>, uin: i64, password: String) {
         .expect("failed to login with password");
     loop {
         match resp {
-            LoginResponse::Success {
+            LoginResponse::Success(LoginSuccess {
                 ref account_info, ..
-            } => {
+            }) => {
                 tracing::info!("login success: {:?}", account_info);
                 break;
             }
-            LoginResponse::DeviceLocked {
+            LoginResponse::DeviceLocked(LoginDeviceLocked {
                 ref sms_phone,
                 ref verify_url,
                 ref message,
                 ..
-            } => {
+            }) => {
                 tracing::info!("device locked: {:?}", message);
                 tracing::info!("sms_phone: {:?}", sms_phone);
                 tracing::info!("verify_url: {:?}", verify_url);
@@ -212,12 +215,12 @@ async fn password_login(client: &Arc<Client>, uin: i64, password: String) {
                 //也可以走短信验证
                 // resp = client.request_sms().await.expect("failed to request sms");
             }
-            LoginResponse::NeedCaptcha {
+            LoginResponse::NeedCaptcha(LoginNeedCaptcha {
                 ref verify_url,
                 // 图片应该没了
                 image_captcha: ref _image_captcha,
                 ..
-            } => {
+            }) => {
                 tracing::info!("滑块URL: {:?}", verify_url);
                 tracing::info!("请输入ticket:");
                 let mut reader = FramedRead::new(tokio::io::stdin(), LinesCodec::new());
@@ -232,7 +235,7 @@ async fn password_login(client: &Arc<Client>, uin: i64, password: String) {
                     .await
                     .expect("failed to submit ticket");
             }
-            LoginResponse::DeviceLockLogin { .. } => {
+            LoginResponse::DeviceLockLogin(_) => {
                 resp = client
                     .device_lock_login()
                     .await
@@ -244,11 +247,15 @@ async fn password_login(client: &Arc<Client>, uin: i64, password: String) {
             LoginResponse::TooManySMSRequest => {
                 panic!("too many sms request");
             }
-            LoginResponse::UnknownLoginStatus {
+            LoginResponse::UnknownStatus(LoginUnknownStatus {
                 ref status,
                 ref tlv_map,
-            } => {
-                panic!("unknown login status: {:?}, {:?}", status, tlv_map);
+                ref message,
+            }) => {
+                panic!(
+                    "unknown login status: {:?} {:?}, {:?}",
+                    message, status, tlv_map
+                );
             }
         }
     }
