@@ -1,4 +1,4 @@
-use rq_tower::rq::client::event::{GroupMessageEvent, PrivateMessageEvent};
+use rq_tower::rq::client::event::{FriendMessageEvent, GroupMessageEvent};
 use rq_tower::rq::msg::elem::Text;
 use rq_tower::rq::msg::MessageChain;
 
@@ -18,12 +18,12 @@ pub async fn print_group(event: GroupMessageEvent) {
     }
 }
 
-pub async fn print_private(PrivateMessageEvent { client, message }: PrivateMessageEvent) {
+pub async fn print_friend(FriendMessageEvent { client, message }: FriendMessageEvent) {
     tracing::info!("private_msg({}): {}", message.from_uin, message.elements);
     let mut chain = MessageChain::default();
     chain.push(Text::new("hello".into()));
     client
-        .send_private_message(message.from_uin, chain)
+        .send_friend_message(message.from_uin, chain)
         .await
         .ok();
 }

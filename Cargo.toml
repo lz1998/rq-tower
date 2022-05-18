@@ -9,4 +9,4 @@ edition = "2021"
 tower = { version = "0.4.11", default-features = false, features = ["util", "buffer", "make", "timeout", "limit"] }
 tokio = { version = "1", features = ["full"] }
 async-trait = "0.1"
-rs-qq = { git = "https://github.com/lz1998/rs-qq.git", branch = "master" }
+ricq = "0.1"

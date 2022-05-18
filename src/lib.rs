@@ -1,3 +1,3 @@
-pub use rs_qq as rq;
+pub use ricq as rq;
 
 pub mod service;

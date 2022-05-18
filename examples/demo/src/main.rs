@@ -18,12 +18,12 @@ use rq_tower::rq::ext::reconnect::{auto_reconnect, Credential, DefaultConnector,
 use rq_tower::rq::version::{get_version, Protocol};
 use rq_tower::rq::{
     Client, LoginDeviceLocked, LoginNeedCaptcha, LoginSuccess, LoginUnknownStatus, QRCodeConfirmed,
-    QRCodeImageFetch, RQError,
+    QRCodeImageFetch,
 };
 use rq_tower::rq::{LoginResponse, QRCodeState};
 use rq_tower::service::builder::RQServiceBuilder;
 
-use crate::handlers::print::{print_group, print_private};
+use crate::handlers::print::{print_friend, print_group};
 
 mod handlers;
 
@@ -46,7 +46,7 @@ async fn main() {
     // 构造 tower service
     let service = RQServiceBuilder::new()
         .on_group_message(print_group)
-        .on_private_message(print_private)
+        .on_friend_message(print_friend)
         .on_group_request(async move |e| {
             tracing::info!("{:?}", e.request);
             e.accept().await.ok();
@@ -77,16 +77,11 @@ async fn main() {
     tokio::task::yield_now().await;
     // 登录
     // 如果有账号密码 密码登录，没有 扫码登录
-    let uin = std::env::var("UIN")
-        .map_err(|_| RQError::Other("no uin".into()))
-        .and_then(|u| {
-            u.parse::<i64>()
-                .map_err(|_| RQError::Other("error uin".into()))
-        });
+    let uin = std::env::var("UIN").map(|u| u.parse::<i64>().expect("uin is not i64"));
 
     let password = std::env::var("PASSWORD");
     if uin.is_ok() && password.is_ok() {
-        password_login(&client, uin.unwrap(), password.unwrap()).await;
+        password_login(&client, uin.clone().unwrap(), password.clone().unwrap()).await;
     } else {
         qrcode_login(&client).await;
     }
@@ -99,7 +94,7 @@ async fn main() {
             .expect("failed to reload friend list");
         tracing::info!("加载好友 {} 个", client.friends.read().await.len());
         client
-            .reload_groups()
+            .reload_groups(50)
             .await
             .expect("failed to reload group list");
         tracing::info!("加载群 {} 个", client.groups.read().await.len());
