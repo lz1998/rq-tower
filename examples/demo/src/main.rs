@@ -14,7 +14,7 @@ use tracing_subscriber::util::SubscriberInitExt;
 
 use rq_tower::rq::device::Device;
 use rq_tower::rq::ext::common::after_login;
-use rq_tower::rq::ext::reconnect::{auto_reconnect, Credential, DefaultConnector, Token};
+use rq_tower::rq::ext::reconnect::{auto_reconnect, Credential, DefaultConnector, Password, Token};
 use rq_tower::rq::version::{get_version, Protocol};
 use rq_tower::rq::{
     Client, LoginDeviceLocked, LoginNeedCaptcha, LoginSuccess, LoginUnknownStatus, QRCodeConfirmed,
@@ -31,11 +31,7 @@ mod handlers;
 async fn main() {
     // 打开日志
     tracing_subscriber::registry()
-        .with(
-            tracing_subscriber::fmt::layer()
-                .with_target(true)
-                .without_time(),
-        )
+        .with(tracing_subscriber::fmt::layer().with_target(true))
         .with(
             tracing_subscriber::filter::Targets::new()
                 .with_target("rs_qq", Level::DEBUG)
@@ -100,13 +96,17 @@ async fn main() {
         tracing::info!("加载群 {} 个", client.groups.read().await.len());
     }
     // 登录成功后生成 token，用于掉线重连
-    let token = client.gen_token().await;
+    let credential = if let (Ok(uin), Ok(password)) = (uin, password) {
+        Credential::Both(Token(client.gen_token().await), Password { uin, password })
+    } else {
+        Credential::Token(Token(client.gen_token().await))
+    };
     // 阻塞到掉线
     handle.await.ok();
     // 自动重连
     auto_reconnect(
         client,
-        Credential::Token(Token(token)),
+        credential,
         Duration::from_secs(10),
         10,
         DefaultConnector,
