@@ -6,7 +6,6 @@ use std::time::Duration;
 
 use bytes::Bytes;
 use futures::StreamExt;
-use tokio::net::TcpStream;
 use tokio_util::codec::{FramedRead, LinesCodec};
 use tracing::Level;
 use tracing_subscriber::layer::SubscriberExt;
@@ -14,7 +13,9 @@ use tracing_subscriber::util::SubscriberInitExt;
 
 use rq_tower::rq::device::Device;
 use rq_tower::rq::ext::common::after_login;
-use rq_tower::rq::ext::reconnect::{auto_reconnect, Credential, DefaultConnector, Password, Token};
+use rq_tower::rq::ext::reconnect::{
+    auto_reconnect, Connector, Credential, DefaultConnector, Password,
+};
 use rq_tower::rq::version::{get_version, Protocol};
 use rq_tower::rq::{
     Client, LoginDeviceLocked, LoginNeedCaptcha, LoginSuccess, LoginUnknownStatus, QRCodeConfirmed,
@@ -63,7 +64,9 @@ async fn main() {
     // 下面都是登录和自动重连，不用动
 
     // TCP 连接
-    let stream = TcpStream::connect(client.get_address())
+    let connector = DefaultConnector;
+    let stream = connector
+        .connect(&client)
         .await
         .expect("failed to connect tcp");
     // 开始处理网络
@@ -83,35 +86,16 @@ async fn main() {
     }
 
     after_login(&client).await;
-    {
-        client
-            .reload_friends()
-            .await
-            .expect("failed to reload friend list");
-        tracing::info!("加载好友 {} 个", client.friends.read().await.len());
-        client
-            .reload_groups(50)
-            .await
-            .expect("failed to reload group list");
-        tracing::info!("加载群 {} 个", client.groups.read().await.len());
-    }
     // 登录成功后生成 token，用于掉线重连
     let credential = if let (Ok(uin), Ok(password)) = (uin, password) {
-        Credential::Both(Token(client.gen_token().await), Password { uin, password })
+        Credential::Password(Password { uin, password })
     } else {
-        Credential::Token(Token(client.gen_token().await))
+        Credential::Token(client.gen_token().await)
     };
     // 阻塞到掉线
     handle.await.ok();
     // 自动重连
-    auto_reconnect(
-        client,
-        credential,
-        Duration::from_secs(10),
-        10,
-        DefaultConnector,
-    )
-    .await;
+    auto_reconnect(client, credential, Duration::from_secs(10), 10, connector).await;
 }
 
 // 扫码登录
